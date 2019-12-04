@@ -18,10 +18,10 @@ from calendar import monthrange
 TXN_DATE_IN_STR = "transaction_date_in_string"
 DAY_OF_MONTH = "day_of_month"
 MONTH = 'month'
-FEATURES_CAT = 'FEATURES_CAT'
-FEATURES_NUM = 'FEATURES_NUM'
-FEATURES_NUM_ENCODED = 'FEATURES_NUM_ENCODED'
-FEATURES_ENCODED = 'FEATURES_ENCODED'
+# FEATURES_CAT = 'FEATURES_CAT'
+# FEATURES_NUM = 'FEATURES_NUM'
+# FEATURES_NUM_ENCODED = 'FEATURES_NUM_ENCODED'
+# FEATURES_ENCODED = 'FEATURES_ENCODED'
 
 WEEK_OF_MONTH = 'week_of_month'
 DAY_OF_WEEK = 'day_of_week'
@@ -122,6 +122,11 @@ def isnumeric(dtype: str):
     return dtype.startswith('float') or dtype.startswith('int')
 
 
+def num_of_days(datestr):
+    dt = to_date(datestr)
+    return monthrange(dt.year, dt.month)[1]
+
+
 def to_date_cc_expire_date(datestr):
     datestr = str(datestr).replace('/','')
     struct = time.strptime(datestr, "%m%y")
@@ -142,10 +147,10 @@ def is_expired(row):
 def is_weekend(day):
     """Determines whether the given day is weekend
     Args:
-        day (str) : should be a lower case day_of_month. e.g: sunday, saturday
+        day (str) : should be a lower case day_of_month. e.g: sunday, saturday, friday
     Return True (bool) if the day is either sunday or saturday
     """
-    if day in ['saturday', 'sunday']:
+    if day in ['saturday', 'sunday', 'friday']:
         return True
     return False
 
@@ -153,11 +158,14 @@ def is_weekend(day):
 def cc_month(cc_expiration_date):
     cc_expiration_date = cc_expiration_date.replace('/', '')
     expire_month = None
-    if len(cc_expiration_date) == 3:
-        expire_month = int(cc_expiration_date[:1])
-    elif len(cc_expiration_date) == 4:    
-        expire_month = int(cc_expiration_date[:2])
-                     
+    try:
+        if len(cc_expiration_date) == 3:
+            expire_month = int(cc_expiration_date[:1])
+        elif len(cc_expiration_date) == 4:
+            expire_month = int(cc_expiration_date[:2])
+    except:
+        expire_month = None
+
     return expire_month
 
 
