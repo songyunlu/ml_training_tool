@@ -109,6 +109,47 @@ def to_weekday(datestr):
     return date.isoweekday()
 
 
+def to_min_segment(datestr):
+    """Returns min segment of either 0, 15, 30 or 45"""
+    min_segment = 0
+    try:
+        minute = time.strptime(datestr, "%Y-%m-%d %H:%M:%S").tm_min
+        if minute < 15:
+            min_segment = 0
+        elif minute < 30:
+            min_segment = 15
+        elif minute < 45:
+            min_segment = 30
+        elif minute < 60:
+            min_segment = 45
+    except:
+        print(f'Exception occurred when transforming to min_segment. Time value: {datestr}')
+
+    return min_segment
+
+
+def hour_min_segment(datestr):
+    """Returns hour with min segment of either 0, 15, 30 or 45"""
+    hour = 0
+    min_segment = 0
+    try:
+        _time = time.strptime(datestr, "%Y-%m-%d %H:%M:%S")
+        hour = _time.tm_hour
+        minute = _time.tm_min
+        if minute < 15:
+            min_segment = 0
+        elif minute < 30:
+            min_segment = 15
+        elif minute < 45:
+            min_segment = 30
+        elif minute < 60:
+            min_segment = 45
+    except:
+        print(f'Exception occurred when transforming to txn_hour_min_segment. Time value: {datestr}')
+
+    return '{:0>2d}:{:0>2d}'.format(hour, min_segment)
+
+
 def daterange(date1_str, date2_str):
     start_date = to_date(date1_str + ' 00:00:00')
     end_date = to_date(date2_str + ' 00:00:00')

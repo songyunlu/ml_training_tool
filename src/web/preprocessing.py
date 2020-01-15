@@ -10,6 +10,7 @@ MAX_99_DIFF = "max_99_diff"
 STD_DIFF = "std_diff"
 FEATURES_NUM_CALCULATED_KEY = "FEATURES_NUM_CALCULATED"
 FEATURES_FLOAT_KEY = "FEATURES_FLOAT"
+ADDITIONAL_FIELDS_KEY = 'ADDITIONAL_FIELDS'
 
 TXN_DATE_IN_STR = "transaction_date_in_string"
 DAY_OF_MONTH = "day_of_month"
@@ -447,6 +448,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.fillna_val = None
         self.feat_grouped = None
         self.features_grouped_encoded = None
+        self.additional_fields = None
         self.use_cat_encoder = True
 
         pass
@@ -500,11 +502,9 @@ class PreProcessing(BaseEstimator, TransformerMixin):
                 df[feat] = df[feat].fillna('').astype(str).str.replace('.0', '', regex=False)
         return df
 
-    def handle_feat_grouped(self, df):
-        self.features_grouped_encoded = []
+    def encode_feat_grouped(self, df):
         for feat_group in self.feat_grouped:
             group_name = "-".join(feat_group)
-            self.features_grouped_encoded.append(group_name)
             df[group_name] = df[feat_group].fillna('').astype(str).apply(lambda x: '-'.join(x), axis=1)
 
     def handle_feat_encoded(self, df):
@@ -517,17 +517,23 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         if 'cc_expiration_date' in df.columns:
             df[IS_EXPIRED] = df[~df['cc_expiration_date'].isna()].apply(is_expired, axis=1)
 
-        if IS_WEEKEND in self.features_cat_and_encoded:
-            if DAY_OF_WEEK not in self.features_encoded:
-                df[DAY_OF_WEEK] = df[TXN_DATE_IN_STR].apply(to_weekday)
+        # if IS_WEEKEND in self.features_cat_and_encoded:
+        if DAY_OF_WEEK not in self.features_encoded:
+            df[DAY_OF_WEEK] = df[TXN_DATE_IN_STR].apply(to_weekday)
 
-            df[IS_WEEKEND] = df[DAY_OF_WEEK].apply(is_weekend)
+        df[IS_WEEKEND] = df[DAY_OF_WEEK].apply(is_weekend)
+
+        if 'min_segment' in self.features_encoded:
+            df['min_segment'] = df[TXN_DATE_IN_STR].apply(to_min_segment)
+
+        if 'txn_hour_min_segment' in self.features_encoded and 'txn_hour_min_segment' not in df.columns:
+            df['txn_hour_min_segment'] = df[TXN_DATE_IN_STR].apply(hour_min_segment)
 
         if FAILED_ATTEMPT_DATE in df.columns:
             df[DAYS_BETWEEN] = df.apply(days_between_ds, axis=1)
 
-        # if 'num_of_days' in self.features_cat_and_encoded:
-        df['num_of_days'] = df[TXN_DATE_IN_STR].apply(num_of_days)
+        if 'num_of_days' in self.features_cat_and_encoded:
+                df['num_of_days'] = df[TXN_DATE_IN_STR].apply(num_of_days)
 
         if FAILED_DAY_OF_MONTH in self.features_cat_and_encoded:
             df[FAILED_DAY_OF_MONTH] = df[FAILED_ATTEMPT_DATE].apply(to_day)
@@ -755,7 +761,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         if row['payment_service_id'] is not None and (
                 row['payment_service_id'].startswith('netgiro-') or row['payment_service_id'].startswith('drwp-')):
             mid = mid.split('-')[0]
-        #             mid = mid + "-" + row['payment_currency'].upper() + "-pacific"
+            mid = mid + "-" + row['payment_currency'].upper() + "-pacific"
 
         return mid
 
@@ -763,7 +769,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         mid = row['failed_merchant_number']
         if row['failed_payment_service_id'] is not None and (
                 row['failed_payment_service_id'].startswith('netgiro-') or row['failed_payment_service_id'].startswith(
-                'drwp-')):
+            'drwp-')):
             mid = mid.split('-')[0]
 
         return mid
@@ -790,18 +796,19 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             lambda x: x.str.lower().replace(' ', '', regex=True).replace("nodatafound',value:'n/a", "nan",
                                                                          regex=False).replace("nodatafound", "nan",
                                                                                               regex=False))
-        self.handle_feat_grouped(df)
+
+        self.encode_feat_grouped(df)
+
         time_start = time.time()
 
         if self.use_cat_encoder:
-            df_encoded_cat = self.encoder.transform(df[self.features_cat_and_encoded + self.features_grouped_encoded])
+            df_encoded_cat = self.encoder.transform(df[self.features_cat + self.features_grouped_encoded])
         else:
-            df_encoded_cat = df[self.features_cat_and_encoded + self.features_grouped_encoded]
+            df_encoded_cat = df[self.features_cat + self.features_grouped_encoded]
 
         transform_time = time.time() - time_start
         print("# transform_time:", transform_time)
-
-        df_encoded_all[self.features_cat_and_encoded + self.features_grouped_encoded] = df_encoded_cat
+        df_encoded_all[self.features_cat + self.features_grouped_encoded] = df_encoded_cat
 
         # Num processing
         df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated].astype(float)
@@ -851,7 +858,8 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.features_cat_and_encoded = self.features_cat + self.features_encoded
 
         self.feat_grouped = features_dict[FEATURES_GROUPED]
-        self.features_grouped_encoded = []
+        self.features_grouped_encoded = ["-".join(feat_group) for feat_group in self.feat_grouped]
+        self.additional_fields = features_dict[ADDITIONAL_FIELDS_KEY]
         if FAILED_DECLINE_TYPE in self.features_cat_and_encoded:
             if self.df_decline_type is None:
                 self.df_decline_type = features_dict['df_decline_type']
@@ -864,25 +872,23 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         df = self.handle_feat_num_encoded(df)
         df = df.reset_index()
         print("self.features_all: ", self.features_all)
-        print('In fit, self.features_cat_and_encoded: {}'.format(self.features_cat_and_encoded))
+        print('In fit, self.features_cat: {}'.format(self.features_cat))
         df[self.features_cat_and_encoded] = df[self.features_cat_and_encoded].astype(str).apply(
             lambda x: x.str.lower().replace(' ', '', regex=True).replace("nodatafound',value:'n/a", "nan",
                                                                          regex=False).replace("nodatafound", "nan",
                                                                                               regex=False))
 
-        self.handle_feat_grouped(df)
-        self.features_all = self.features_cat_and_encoded + self.features_grouped_encoded + self.features_num + self.features_num_encoded  + self.features_num_calculated
+        self.encode_feat_grouped(df)
+        self.features_all = self.features_cat + self.features_grouped_encoded + self.features_num + self.features_num_encoded + self.features_num_calculated
 
         time_start = time.time()
         #         te = EnhancedTargetEncoder(cols=self.features_cat_and_encoded, handle_unknown='impute', min_samples_leaf=25, impute_missing=True)
-        te = EnhancedLeaveOneOutEncoder(cols=self.features_cat_and_encoded + self.features_grouped_encoded,
+        te = EnhancedLeaveOneOutEncoder(cols=self.features_cat + self.features_grouped_encoded,
                                         handle_unknown='impute', impute_missing=True)
-        print(self.features_cat_and_encoded)
-        print("fit df[self.features_cat_and_encoded] size: {}".format(
-            df[self.features_cat_and_encoded + self.features_grouped_encoded].shape))
+        print(self.features_cat)
 
         if self.use_cat_encoder:
-            self.encoder = te.fit(df[self.features_cat_and_encoded + self.features_grouped_encoded], y)
+            self.encoder = te.fit(df[self.features_cat + self.features_grouped_encoded], y)
             fit_time = time.time() - time_start
             print("# fit_time:", fit_time)
             print('In fit, self.encoder: ')
