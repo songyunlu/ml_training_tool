@@ -4,7 +4,7 @@ from os import path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import requests
+import json
 from sklearn import metrics
 from sklearn.dummy import DummyClassifier
 from sklearn.externals import joblib
@@ -51,7 +51,7 @@ def display_feature_importance(pcols, pvals, sorted_idx):
     plt.title('Variable Importance')
 
 
-def build_and_train(df, clf, param_grid, model_name, model_file='', best_param=None, features_dict=None, metrics_feedback_url=None):
+def build_and_train(df, clf, param_grid, model_name, model_file='', best_param=None, features_dict=None, output_dir=None):
     if features_dict is None:
         features_dict = {}
 
@@ -195,12 +195,12 @@ def build_and_train(df, clf, param_grid, model_name, model_file='', best_param=N
     print("# confusion_matrix -  test:\n", conf_mx)
     result_dict['conf_mx'] = conf_mx.tolist()
 
-    save_metrics(metrics_feedback_url, {
+    save_metrics(output_dir, 'cross_validation', {
         'type': 'CROSS_VALIDATION',
         'accuracy': train_accuracy,
         'rocAuc': train_auc
     })
-    save_metrics(metrics_feedback_url, {
+    save_metrics(output_dir, 'testing', {
         'type': 'TESTING',
         'accuracy': test_accuracy,
         'rocAuc': test_auc,
@@ -210,9 +210,10 @@ def build_and_train(df, clf, param_grid, model_name, model_file='', best_param=N
     return pipe, result_dict
 
 
-def save_metrics(url=None, payload=None):
-    if payload is None:
-        payload = {}
+def save_metrics(output_dir=None, metrics_type=None, metrics_payload=None):
+    if metrics_payload is None:
+        metrics_payload = {}
 
-    if url is not None:
-        requests.post(url, json=payload)
+    if output_dir and metrics_type is not None:
+        with open(f'{output_dir}/{metrics_type}.metrics', 'w') as metrics_json:
+            json.dump(metrics_payload, metrics_json, ensure_ascii=False, indent=4)
