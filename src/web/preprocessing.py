@@ -1,5 +1,6 @@
 from src.web.utils import *
 import numpy as np
+import pandas as pd
 
 PAY_AMOUNT_USD = "payment_amount_usd"
 
@@ -41,83 +42,6 @@ RENEW_ATT_NUM = 'renew_att_num'
 FAILED_RESPONSE_CODE = 'failed_response_code'
 FAILED_ATTEMPT_DATE = 'failed_attempt_date'
 FAILED_DAY_OF_MONTH = 'failed_day_of_month'
-
-
-class DeclineTypeUtil:
-    """A util to group decline type based on provided response message"""
-
-    DECLINE_TEXT = 'DECLINE_TEXT'
-    DECLINE_TYPE = 'DECLINE_TYPE'
-    BASE = 'Base'
-
-    def __init__(self, df_decline_type):
-        self._df_decline_type = df_decline_type
-        self._msg_group = {
-            'do_not_honor': 'do not honor',
-            'attempt_lower_amount': 'lower amount',
-            'Insufficient Funds': ['insufficient', 'balance'],
-            'correct_cc_retry': 'correct card',
-            'invalid_cc': 'invalid card',
-            'lost_stolen': 'lost or stolen',
-            'invalid_account': 'invalid account',
-            'do_not_try_merchant_review': 'do not try again/merchant review',
-            'expired_card': 'expired',
-            'pickup_card': 'pick',
-            'blocked_first_used': 'blocked',
-            'invalid_txn': 'invalid trans',
-            'restricted_card': 'restricted',
-            'not_permitted': 'not permitted',
-            'expired card': 'expired card',
-            'unable to determine format': 'determine format',
-            'system error': 'system error',
-            'no reply': 'no reply',
-            'no charge model found': 'no charge model found',
-            'issuer unavailable': 'issuer unavailable',
-            'litle http response code': 'litle http response code',
-            'ioexception': 'ioexception',
-            'invalid merchant': 'invalid merchant',
-            'international filtering': 'international filtering',
-            'corrupt input data': 'corrupt input data',
-            'server error': 'server error',
-            'acquirer error': 'acquirer error',
-            'transaction refused[30]': 'transaction refused[30]',
-            'transaction refused[002]': 'transaction refused[002]',
-            'txn_refused': 'refuse',
-            'declined non generic': 'declined non generic',
-            'declined': 'decline',
-            'transaction not allowed at terminal': 'transaction not allowed at terminal',
-            'error validating xml data': 'error validating xml data',
-            'communication problems': 'communication problems',
-            'new account info': 'new account info',
-            'unable to connect to gateway': 'unable to connect to gateway'
-        }
-
-    def __group_response_msg(self, msg):
-        """Groups decline type based on the given message"""
-        other = self.BASE
-
-        if not isinstance(msg, str):
-            return other
-
-        msg_lower = msg.lower()
-        for key, val in self._msg_group.items():
-            if isinstance(val, list):
-                for msg in val:
-                    if msg in msg_lower:
-                        return key
-            else:
-                if val in msg_lower:
-                    return key
-
-        return other
-
-    def decline_type(self, response_msg):
-        '''Converts to decline_type based on the given response_msg'''
-        dec_type = self._df_decline_type[self._df_decline_type[self.DECLINE_TEXT] == response_msg][self.DECLINE_TYPE]
-        if dec_type.empty or dec_type.iloc[0] == self.BASE:
-            return self.__group_response_msg(response_msg)
-        else:
-            return dec_type.iloc[0]
 
 
 def processor_mid_changed(row):
@@ -174,153 +98,91 @@ class GroupUtil:
     def __init__(self, group_dict):
         self.group_dict = group_dict
 
-    def date_bin(self, row):
-        result = self.group_dict.get("date_bin_dict", {}).get((str(row['bin']), row['day_of_month']), None)
-        return result
+    def get_bin_profile_value(self, row, per_date_dict, per_day_of_month_dict):
+        val = self.group_dict.get(per_date_dict, {}).get((str(row['bin']), row['month'], row['day_of_month']), None)
+        if not val:
+            val = self.group_dict.get(per_day_of_month_dict, {}).get((str(row['bin']), row['day_of_month']), None)
+        return val
 
-    def date_mid_bin(self, row):
-        result = self.group_dict.get("date_mid_bin_dict", {}).get(
-            (str(row['bin']), str(row['merchant_number']), row['day_of_month']), None)
-        return result
-
-    def processor_mid_bin(self, row):
-        result = self.group_dict.get("processor_mid_bin_dict", {}).get(
-            (str(row['bin']), str(row['payment_service_id']), str(row['merchant_number'])), None)
-        return result
-
-    def date_decline_type_bin(self, row):
-        result = self.group_dict.get("date_decline_type_bin_dict", {}).get(
-            (str(row['bin']), str(row['failed_decline_type']), row['day_of_month']), None)
-        return result
-
-    def day_weekmonth_bin(self, row):
-        result = self.group_dict.get("day_weekmonth_bin_dict", {}).get(
-            (str(row['bin']), int(row['week_of_month']), int(row['day_of_week'])), None)
-        return result
+    def get_bank_profile_value(self, row, per_date_dict, per_day_of_month_dict):
+        val = self.group_dict.get(per_date_dict, {}).get((str(row['bank_name']), row['card_category'], row['month'], row['day_of_month']), None)
+        if not val:
+            val = self.group_dict.get(per_day_of_month_dict, {}).get((str(row['bank_name']), row['card_category'], row['day_of_month']), None)
+        return val
 
     def date_max_diff(self, row):
-        result = 0
-        date_max = self.group_dict.get("max_per_date_dict", {}).get((str(row['bin']), row['day_of_month']), None)
-        if isinstance(date_max, float) or isinstance(date_max, int):
-            result = date_max - float(row[PAY_AMOUNT_USD])
+        result = -1
+        val = self.get_bin_profile_value(row, 'max_per_date_month_dict', 'max_per_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            result = val - float(row[PAY_AMOUNT_USD])
         return result
 
-    def date_max(self, row):
-        date_max = self.group_dict.get("max_per_date_dict", {}).get((str(row['bin']), row['day_of_month']), None)
-        return date_max
+    def date_max_99_diff(self, row):
+        result = -1
+        val = self.get_bin_profile_value(row, 'max_99_per_date_month_dict', 'max_99_per_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            result = val - float(row[PAY_AMOUNT_USD])
+        return result
+
+    def date_max_bank_card_diff(self, row):
+        val = self.get_bank_profile_value(row, 'max_per_bank_card_date_month_dict', 'max_per_bank_card_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            return val - float(row[PAY_AMOUNT_USD])
+        else:
+            return self.date_max_diff(row)
+
+    def date_max_99_bank_card_diff(self, row):
+        val = self.get_bank_profile_value(row, 'max_99_per_bank_card_date_month_dict', 'max_99_per_bank_card_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            return val - float(row[PAY_AMOUNT_USD])
+        else:
+            return self.date_max_99_diff(row)
+
+    def bin_date_max_comparison(self, row):
+        result = 0.99
+        try:
+            val = self.get_bin_profile_value(row, 'max_per_date_month_dict', 'max_per_day_of_month_dict')
+            if isinstance(val, float) or isinstance(val, int):
+                result = float(row[PAY_AMOUNT_USD]) / val
+        except:
+            pass
+        return result
+
+    def bin_date_mean_comparison(self, row):
+        result = 2.0
+        try:
+            val = self.get_bin_profile_value(row, 'mean_per_date_month_dict', 'mean_per_day_of_month_dict')
+            if isinstance(val, float) or isinstance(val, int):
+                result = float(row[PAY_AMOUNT_USD]) / val
+        except:
+            pass
+        return result
+
+    def success_bin_count_per_day_of_month(self, row):
+        val = self.get_bin_profile_value(row, 'success_per_date_month_dict', 'success_per_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            return int(val)
+        return 0
+
+    def success_bank_count_per_day_of_month(self, row):
+        val = self.get_bank_profile_value(row, 'success_per_bank_card_date_month_dict', 'success_per_bank_card_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            return int(val)
+        else:
+            return self.success_bin_count_per_day_of_month(row)
+
+    def date_median_diff(self, row):
+        result = 0
+        val = self.get_bin_profile_value(row, 'median_per_date_dict', 'median_per_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            result = val - float(row[PAY_AMOUNT_USD])
+        return result
 
     def date_mean_diff(self, row):
         result = 0
-        date_mean = self.group_dict.get("mean_per_date_dict", {}).get((str(row['bin']), row['day_of_month']), None)
-        if isinstance(date_mean, float) or isinstance(date_mean, int):
-            result = date_mean - float(row[PAY_AMOUNT_USD])
-        return result
-
-    def date_country(self, row):
-        result = self.group_dict.get("date_country_dict", {}).get((str(row['issuer_country']), row['day_of_month']),
-                                                                  None)
-        return result
-
-    def date_processor_bin(self, row):
-        result = self.group_dict.get("date_processor_bin_dict", {}).get(
-            (str(row['bin']), str(row['payment_service_id']), row['day_of_month']), None)
-        return result
-
-    def days_between_decline_type(self, row):
-        result = self.group_dict.get("days_between_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['days_between']), None)
-        return result
-
-    def days_between_bin_decline_type(self, row):
-        result = self.group_dict.get("days_between_bin_decline_type_dict", {}).get(
-            (row['failed_decline_type'], str(row['bin']), row['days_between']), None)
-        return result
-
-    def days_between_date_bin_decline_type(self, row):
-        result = self.group_dict.get("days_between_date_bin_decline_type_dict", {}).get(
-            (row['failed_decline_type'], str(row['bin']), row['day_of_month'], row['days_between']), None)
-        return result
-
-    def days_between_bin_failed_message(self, row):
-        failed_message = str(row['failed_response_message']).lower().replace(' ', '')
-        result = self.group_dict.get("days_between_bin_failed_message_dict", {}).get(
-            (failed_message, str(row['bin']), row['days_between']), None)
-        return result
-
-    def days_between_country_decline_type(self, row):
-        result = self.group_dict.get("days_between_country_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['issuer_country'], row['days_between']), None)
-        return result
-
-    def days_between_bin_decline_code(self, row):
-        result = self.group_dict.get("days_between_bin_decline_code_dict", {}).get(
-            (str(row['failed_response_code']), str(row['bin']), row['days_between']), None)
-
-        return result
-
-    def days_between_site_decline_type(self, row):
-        result = self.group_dict.get("days_between_site_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['site_id'], row['days_between']), None)
-
-        return result
-
-    def days_between_site_decline_code(self, row):
-        result = self.group_dict.get("days_between_site_decline_code_dict", {}).get(
-            (str(row['failed_response_code']), row['site_id'], row['days_between']), None)
-
-        return result
-
-    def date_site_decline_type(self, row):
-        result = self.group_dict.get("date_site_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['site_id'], row['day_of_month']), None)
-
-        return result
-
-    def date_site_decline_code(self, row):
-        result = self.group_dict.get("date_site_decline_code_dict", {}).get(
-            (str(row['failed_response_code']), row['site_id'], row['day_of_month']), None)
-
-        return result
-
-    def date_country_decline_type(self, row):
-        result = self.group_dict.get("date_country_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['issuer_country'], row['day_of_month']), None)
-
-        return result
-
-    def date_country_decline_code(self, row):
-        result = self.group_dict.get("date_country_decline_code_dict", {}).get(
-            (str(row['failed_response_code']), row['issuer_country'], row['day_of_month']), None)
-        return result
-
-    def days_between_att_num_decline_type(self, row):
-        result = self.group_dict.get("days_between_att_num_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['renew_att_num'], row['days_between']), None)
-        return result
-
-    def days_between_country_site(self, row):
-        result = self.group_dict.get("days_between_country_site_dict", {}).get(
-            (row['site_id'], row['issuer_country'], row['days_between']), None)
-        return result
-
-    def date_country_site(self, row):
-        result = self.group_dict.get("date_country_site_dict", {}).get(
-            (row['site_id'], row['issuer_country'], row['day_of_month']), None)
-        return result
-
-    def nod_days_between_decline_type(self, row):
-        result = self.group_dict.get("nod_days_between_decline_type_dict", {}).get(
-            (row['failed_decline_type'], row['days_between'], row['num_of_days']), None)
-        return result
-
-    def nod_days_between_decline_code(self, row):
-        result = self.group_dict.get("nod_days_between_decline_code_dict", {}).get(
-            (row['failed_response_code'], row['days_between'], row['num_of_days']), None)
-        return result
-
-    def date_nod_bin(self, row):
-        result = self.group_dict.get("date_nod_bin_dict", {}).get(
-            (row['bin'], row['num_of_days'], row['day_of_month']), None)
+        val = self.get_bin_profile_value(row, 'mean_per_date_dict', 'mean_per_day_of_month_dict')
+        if isinstance(val, float) or isinstance(val, int):
+            result = val - float(row[PAY_AMOUNT_USD])
         return result
 
 
@@ -338,20 +200,8 @@ class EcoBinUtil:
         return result
 
 
-# class PaymentMidBinUtil:
-#     def __init__(self, payment_mid_bin_dict):
-#         self.payment_mid_bin_dict = payment_mid_bin_dict
-
-#     def payment_mid_bin(self, row):
-#         result = self.payment_mid_bin_dict.get((row['bin'], row['payment_service_id'], row['merchant_number']), -1)
-#         return result
-
 class TxnHourUtil:
-    #     def __init__(self, txn_hour_bin_dict, txn_hour_processor_dict, txn_hour_country_dict, txn_hour_site_dict):
-    #         self.txn_hour_bin_dict = txn_hour_bin_dict
-    #         self.txn_hour_processor_dict = txn_hour_processor_dict
-    #         self.txn_hour_country_dict = txn_hour_country_dict
-    #         self.txn_hour_site_dict = txn_hour_site_dict
+
     def __init__(self, group_dict):
         self.group_dict = group_dict
 
@@ -420,19 +270,10 @@ class PreProcessing(BaseEstimator, TransformerMixin):
     """Custom Pre-Processing estimator for Best Retry
     """
 
-    def __init__(self, df_bin_profile):
+    def __init__(self):
         self.df_decline_type = None
         self.bin_profile = None
-        self.eco_bin_util = None
-        self.txn_hour_util = None
         self.group_util = None
-
-        if df_bin_profile is None:
-            print('df_bin_profile is NONE')
-        else:
-            self.bin_profile = df_bin_profile
-            self.bin_profile[BIN] = self.bin_profile[BIN].astype(str).str.replace('.0', '', regex=False)
-            print('# df_bin_profile: {}'.format(df_bin_profile.shape))
 
         self.features_cat = None
         self.features_encoded = None
@@ -451,6 +292,9 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.additional_fields = None
         self.use_cat_encoder = True
 
+        '''first_level_models is a dict consist of model_name as key and model_file as value'''
+        self.first_level_models: dict = {}
+        self.first_level_models_field_names = []
         pass
 
     def convert_sin(self, value, max_value, start=0):
@@ -514,36 +358,40 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         if DAY_OF_WEEK in self.features_encoded:
             df[DAY_OF_WEEK] = df[TXN_DATE_IN_STR].apply(to_weekday)
 
-        if 'cc_expiration_date' in df.columns:
-            df[IS_EXPIRED] = df[~df['cc_expiration_date'].isna()].apply(is_expired, axis=1)
+        if IS_EXPIRED in self.features_cat_and_encoded and 'cc_expiration_date' in df.columns and IS_EXPIRED not in df.columns:
+            df[IS_EXPIRED] = df.apply(is_expired, axis=1)
 
-        # if IS_WEEKEND in self.features_cat_and_encoded:
         if DAY_OF_WEEK not in self.features_encoded:
             df[DAY_OF_WEEK] = df[TXN_DATE_IN_STR].apply(to_weekday)
 
         df[IS_WEEKEND] = df[DAY_OF_WEEK].apply(is_weekend)
 
-        if 'min_segment' in self.features_encoded:
+        if 'min_segment' in self.features_encoded and 'min_segment' not in df.columns:
             df['min_segment'] = df[TXN_DATE_IN_STR].apply(to_min_segment)
 
         if 'txn_hour_min_segment' in self.features_encoded and 'txn_hour_min_segment' not in df.columns:
             df['txn_hour_min_segment'] = df[TXN_DATE_IN_STR].apply(hour_min_segment)
 
         if FAILED_ATTEMPT_DATE in df.columns:
-            df[DAYS_BETWEEN] = df.apply(days_between_ds, axis=1)
+            try:
+                df[DAYS_BETWEEN] = df.apply(days_between_ds, axis=1)
+            except ValueError:
+                pass
+
+        if 'days_between_first_cal' in self.features_encoded and 'days_between_first_cal' not in df.columns:
+            try:
+                df["days_between_first_cal"] = df.apply(init_days_between_ds, axis=1)
+            except ValueError:
+                pass
 
         if 'num_of_days' in self.features_cat_and_encoded:
-                df['num_of_days'] = df[TXN_DATE_IN_STR].apply(num_of_days)
+            df['num_of_days'] = df[TXN_DATE_IN_STR].apply(num_of_days)
 
         if FAILED_DAY_OF_MONTH in self.features_cat_and_encoded:
             df[FAILED_DAY_OF_MONTH] = df[FAILED_ATTEMPT_DATE].apply(to_day)
 
         if MONTH in self.features_cat_and_encoded:
             df[MONTH] = df[TXN_DATE_IN_STR].apply(to_month)
-
-        if FAILED_DECLINE_TYPE in self.features_cat_and_encoded and FAILED_DECLINE_TYPE not in df.columns:
-            df[FAILED_DECLINE_TYPE] = df[FAILED_RESPONSE_MESSAGE].apply(
-                DeclineTypeUtil(self.df_decline_type).decline_type)
 
         if "cc_expiration_date" in df.columns:
             df['cc_expiration_date'] = df['cc_expiration_date'].apply(str)
@@ -559,18 +407,80 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         if "cc_month" in self.features_cat_and_encoded and "cc_month" not in df.columns:
             df['cc_month'] = df["cc_expiration_date"].apply(cc_month)
 
+        segment_num_group = [0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 20, 25, 30, 40, 50, 70, 100, 150]
+        # duration_group = [0, 1, 3, 10, 23, 25, 27, 32, 59, 62, 70, 80, 90, 100, 120, 130, 150, 200, 300, 363, 368, 373,729, 733, 1000, 2000]
+        duration_group = [0, 3, 6, 9, 13, 17, 20, 25, 27, 33, 39, 43, 62, 70, 80, 88, 94, 100, 118, 125, 130, 146, 155, 176, 184, 200, 213, 230, 263, 300, 363, 368, 373,729, 733, 1000, 2000]
+
+        if "segment_num" in df.columns:
+            try:
+                df['segment_num'] = df['segment_num'].astype(int)
+            except:
+                df['segment_num'] = -1
+
+        if "segment_num_group" in self.features_cat_and_encoded and "segment_num_group" not in df.columns:
+            try:
+                df['segment_num_group'] = pd.cut(df['segment_num'], segment_num_group).astype(str).str.replace('.0', '', regex=False)
+            except:
+                df['segment_num_group'] = None
+
+        if "duration" in df.columns:
+            try:
+                df['duration'] = df['duration'].astype(int)
+            except:
+                df['duration'] = -1
+
+            df.loc[(df['duration'] == 28) | (df['duration'] == 29) | (df['duration'] == 31), 'duration'] = 30
+            df.loc[(df['duration'] == 366), 'duration'] = 365
+            df.loc[(df['duration'] == 731), 'duration'] = 730
+
+        if "sub_duration_group" in self.features_cat_and_encoded and "sub_duration_group" not in df.columns:
+            try:
+                df['sub_duration_group'] = pd.cut(df['duration'], duration_group).astype(str).str.replace('.0', '', regex=False)
+            except:
+                df['sub_duration_group'] = None
+
+        if "sub_age" in df.columns:
+            try:
+                df['sub_age'] = df['sub_age'].astype(int)
+            except:
+                df['sub_age'] = -1
+
+        if "sub_age_group" in self.features_cat_and_encoded and "sub_age_group" not in df.columns:
+            try:
+                df['sub_age_group'] = pd.cut(df['sub_age'], duration_group).astype(str).str.replace('.0', '', regex=False)
+            except:
+                df['sub_age_group'] = None
+
+
         if "issuer_country" in self.features_cat_and_encoded and "billing_country" in df.columns:
             df["issuer_country"] = df["issuer_country"].replace('', np.nan).fillna(df["billing_country"])
 
         if "bank_code" in self.features_cat_and_encoded and "bank_code" in df.columns:
-            bank_code = df["bank_code"]
             df.loc[(df.bank_code.str.lower() != "non3ds") & (df.bank_code.str.lower() != "rb"), 'bank_code'] = 'other'
 
         if "date_increment" in self.features_cat_and_encoded:
             df["date_increment"] = df["date_increment"].replace('', np.nan).fillna('NONE')
             df.loc[df.date_increment == 'nan', 'date_increment'] = 'NONE'
 
+        if "bank_name" in df.columns:
+            df['bank_name'] = df["bank_name"].astype(str).apply(lambda x: x.lower().replace(' ', '').replace("nationalassociation", "n.a").replace(",", ""))
+
+        if "card_category" in df.columns:
+            df['card_category'] = df["card_category"].astype(str).apply(lambda x: x.lower().replace(' ', '').replace(",", ""))
+
+        if "card_brand" in df.columns and "bank_name" in df.columns:
+            df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'bank_name'] = 'american_express'
+            df.loc[(df.card_brand.str.lower().str.startswith('discover', na=False)), 'bank_name'] = 'discover'
+
         print("# Finish handle_feat_encoded.")
+        return df
+
+    def handle_stack_models(self, df):
+        # df_input = df.copy()
+        for model_name, model_file in self.first_level_models.items():
+            feat_name = f'predict_proba_{model_name}'
+            predict_proba = model_file.predict_proba(df)
+            df[feat_name] = list(map(lambda x: x[1], predict_proba.tolist()))
         return df
 
     def handle_feat_num_encoded(self, df):
@@ -578,21 +488,11 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             df[BIN] = pd.to_numeric(df[BIN], errors='coerce')
             df[BIN] = df[BIN].astype(str).str.replace('.0', '', regex=False)
 
-            # #             drops self.features_num_encoded from df if they exist and have null value
-            #             if set(self.features_num_encoded).issubset(df.columns) and df[self.features_num_encoded].isnull().values.any():
-            #                 df = df.drop(self.features_num_encoded, axis=1)
-
-            #             if MEAN in self.features_num_encoded and MEAN not in df.columns and self.features_bin_profile is not None:
-            #                 df[BIN] = df[BIN].astype(str).str.replace('.0', '', regex=False)
-            #                 df = pd.merge(df, self.bin_profile[[BIN] + self.features_bin_profile], left_on=BIN, right_on=BIN, how='left')
 
             if "Max_99" in self.features_num_encoded and "Max_99" not in df.columns and self.features_bin_profile is not None:
                 df[BIN] = df[BIN].astype(str).str.replace('.0', '', regex=False)
                 df = pd.merge(df, self.bin_profile[[BIN] + self.features_bin_profile], left_on=BIN, right_on=BIN,
                               how='left')
-
-            #             if 'amount_over_max' in self.features_num_calculated and "Max_99" in self.features_num_encoded and "payment_amount_usd" in self.features_num:
-            #                 df['amount_over_max'] = df["payment_amount_usd"] > df["Max_99"]
 
             if MEAN_DIFF in self.features_num_calculated and MEAN_DIFF not in df.columns:
                 df[MEAN_DIFF] = df[MEAN] - df[PAY_AMOUNT_USD]
@@ -626,131 +526,44 @@ class PreProcessing(BaseEstimator, TransformerMixin):
                 df["added_expiry_years"] = df["expired_years_diff"] + df["years_over"]
                 df["added_expiry_years"] = df["added_expiry_years"].fillna('').astype(str).str.replace('.0', '',
                                                                                                        regex=False)
-
             df["add_expiry_years_bin"] = df.apply(self.eco_bin_util.added_years_bin, axis=1)
 
         #         if "payment_mid_bin" in self.features_num_encoded:
         #             df["payment_mid_bin"] = df.apply(self.payment_mid_bin_util.payment_mid_bin, axis=1)
 
-        if "txn_hour_bin" in self.features_num_encoded:
-            print("# apply txn_hour_bin")
-            df["txn_hour_bin"] = df.apply(self.txn_hour_util.txn_hour_bin, axis=1)
+        if "txn_amount_bin_max_per_date_diff" in self.features_num_encoded:
+                df["txn_amount_bin_max_per_date_diff"] = df.apply(self.group_util.date_max_diff, axis=1)
 
-        if "txn_hour_processor" in self.features_num_encoded:
-            df["txn_hour_processor"] = df.apply(self.txn_hour_util.txn_hour_processor, axis=1)
+        if "txn_amount_bin_max_99_per_date_diff" in self.features_num_encoded:
+            df["txn_amount_bin_max_99_per_date_diff"] = df.apply(self.group_util.date_max_99_diff, axis=1)
 
-        if "txn_hour_country" in self.features_num_encoded:
-            df["txn_hour_country"] = df.apply(self.txn_hour_util.txn_hour_country, axis=1)
+        if "txn_amount_bank_card_max_per_date_diff" in self.features_num_encoded:
+            df["txn_amount_bank_card_max_per_date_diff"] = df.apply(self.group_util.date_max_bank_card_diff, axis=1)
 
-        if "txn_hour_site" in self.features_num_encoded:
-            df["txn_hour_site"] = df.apply(self.txn_hour_util.txn_hour_site, axis=1)
+        if "txn_amount_bank_card_max_99_per_date_diff" in self.features_num_encoded:
+            df["txn_amount_bank_card_max_99_per_date_diff"] = df.apply(self.group_util.date_max_99_bank_card_diff, axis=1)
 
-        if "txn_hour_bank_name" in self.features_num_encoded:
-            df["txn_hour_bank_name"] = df.apply(self.txn_hour_util.txn_hour_bank_name, axis=1)
+        if "bin_date_max_comparison" in self.features_num_encoded:
+            df["bin_date_max_comparison"] = df.apply(self.group_util.bin_date_max_comparison, axis=1)
 
-        if "txn_hour_currency" in self.features_num_encoded:
-            df["txn_hour_currency"] = df.apply(self.txn_hour_util.txn_hour_currency, axis=1)
+        if "bin_date_mean_comparison" in self.features_num_encoded:
+            df["bin_date_mean_comparison"] = df.apply(self.group_util.bin_date_mean_comparison, axis=1)
 
-        if "txn_hour_mid" in self.features_num_encoded:
-            df["txn_hour_mid"] = df.apply(self.txn_hour_util.txn_hour_mid, axis=1)
+        if 'success_bin_count_per_day_of_month' in self.features_num_encoded:
+            df["success_bin_count_per_day_of_month"] = df.apply(self.group_util.success_bin_count_per_day_of_month, axis=1)
 
-        if "txn_hour_date" in self.features_num_encoded:
-            df["txn_hour_date"] = df.apply(self.txn_hour_util.txn_hour_date, axis=1)
+        if 'success_bank_card_count_per_day_of_month' in self.features_num_encoded:
+            df["success_bank_card_count_per_day_of_month"] = df.apply(self.group_util.success_bank_count_per_day_of_month, axis=1)
 
-        if "bin_max_diff_per_hour" in self.features_num_encoded:
-            df["bin_max_diff_per_hour"] = df.apply(self.txn_hour_util.bin_hour_max_diff, axis=1)
-
-        if "processor_max_diff_per_hour" in self.features_num_encoded:
-            df["processor_max_diff_per_hour"] = df.apply(self.txn_hour_util.processor_hour_max_diff, axis=1)
-
-        if "date_bin" in self.features_num_encoded:
-            df["date_bin"] = df.apply(self.group_util.date_bin, axis=1)
-
-        if "date_mid_bin" in self.features_num_encoded:
-            df["date_mid_bin"] = df.apply(self.group_util.date_mid_bin, axis=1)
-
-        if "processor_mid_bin" in self.features_num_encoded:
-            df["processor_mid_bin"] = df.apply(self.group_util.processor_mid_bin, axis=1)
-
-        if "date_decline_type_bin" in self.features_num_encoded:
-            df["date_decline_type_bin"] = df.apply(self.group_util.date_decline_type_bin, axis=1)
-
-        if "day_weekmonth_bin" in self.features_num_encoded:
-            df["day_weekmonth_bin"] = df.apply(self.group_util.day_weekmonth_bin, axis=1)
-
-        if "date_max_diff" in self.features_num_encoded:
-            df["date_max_diff"] = df.apply(self.group_util.date_max_diff, axis=1)
+        if "date_median_diff" in self.features_num_encoded:
+            df["date_median_diff"] = df.apply(self.group_util.date_median_diff, axis=1)
 
         if "date_max" in self.features_num_encoded:
             df["date_max"] = df.apply(self.group_util.date_max, axis=1)
 
         if "date_mean_diff" in self.features_num_encoded:
-            print("# apply date_mean_diff")
             df["date_mean_diff"] = df.apply(self.group_util.date_mean_diff, axis=1)
 
-        if "date_country" in self.features_num_encoded:
-            print("# apply date_country")
-            df["date_country"] = df.apply(self.group_util.date_country, axis=1)
-
-        if "date_processor_bin" in self.features_num_encoded:
-            df["date_processor_bin"] = df.apply(self.group_util.date_processor_bin, axis=1)
-
-        if "days_between_decline_type" in self.features_num_encoded:
-            df["days_between_decline_type"] = df.apply(self.group_util.days_between_decline_type, axis=1)
-
-        if "days_between_bin_decline_type" in self.features_num_encoded:
-            df["days_between_bin_decline_type"] = df.apply(self.group_util.days_between_bin_decline_type, axis=1)
-
-        if "days_between_date_bin_decline_type" in self.features_num_encoded:
-            df["days_between_date_bin_decline_type"] = df.apply(self.group_util.days_between_date_bin_decline_type,
-                                                                axis=1)
-
-        if "days_between_bin_failed_message" in self.features_num_encoded:
-            df["days_between_bin_failed_message"] = df.apply(self.group_util.days_between_bin_failed_message, axis=1)
-
-        if "days_between_country_decline_type" in self.features_num_encoded:
-            df["days_between_country_decline_type"] = df.apply(self.group_util.days_between_country_decline_type,
-                                                               axis=1)
-
-        if "days_between_bin_decline_code" in self.features_num_encoded:
-            df["days_between_bin_decline_code"] = df.apply(self.group_util.days_between_bin_decline_code, axis=1)
-
-        if "days_between_site_decline_type" in self.features_num_encoded:
-            df["days_between_site_decline_type"] = df.apply(self.group_util.days_between_site_decline_type, axis=1)
-
-        if "days_between_site_decline_code" in self.features_num_encoded:
-            df["days_between_site_decline_code"] = df.apply(self.group_util.days_between_site_decline_code, axis=1)
-
-        if "date_site_decline_type" in self.features_num_encoded:
-            df["date_site_decline_type"] = df.apply(self.group_util.date_site_decline_type, axis=1)
-
-        if "date_site_decline_code" in self.features_num_encoded:
-            df["date_site_decline_code"] = df.apply(self.group_util.date_site_decline_code, axis=1)
-
-        if "date_country_decline_type" in self.features_num_encoded:
-            df["date_country_decline_type"] = df.apply(self.group_util.date_country_decline_type, axis=1)
-
-        if "date_country_decline_code" in self.features_num_encoded:
-            df["date_country_decline_code"] = df.apply(self.group_util.date_country_decline_code, axis=1)
-
-        if "days_between_att_num_decline_type" in self.features_num_encoded:
-            df["days_between_att_num_decline_type"] = df.apply(self.group_util.days_between_att_num_decline_type,
-                                                               axis=1)
-
-        if "days_between_country_site" in self.features_num_encoded:
-            df["days_between_country_site"] = df.apply(self.group_util.days_between_country_site, axis=1)
-
-        if "date_country_site" in self.features_num_encoded:
-            df["date_country_site"] = df.apply(self.group_util.date_country_site, axis=1)
-
-        if "nod_days_between_decline_type" in self.features_num_encoded:
-            df["nod_days_between_decline_type"] = df.apply(self.group_util.nod_days_between_decline_type, axis=1)
-
-        if "nod_days_between_decline_code" in self.features_num_encoded:
-            df["nod_days_between_decline_code"] = df.apply(self.group_util.nod_days_between_decline_code, axis=1)
-
-        if "date_nod_bin" in self.features_num_encoded:
-            df["date_nod_bin"] = df.apply(self.group_util.date_nod_bin, axis=1)
 
         df = self.handle_feat_cyclical(df)
 
@@ -783,9 +596,15 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
         return df
 
+    def handle_processor(self, df):
+        if 'payment_service_id' in df.columns:
+            df['payment_service_id'] = df["payment_service_id"].astype(str).str.replace('drwp-', 'netgiro-', regex=False)
+
     def encode(self, df):
         # Consolidated feature processing
         df_encoded_all = pd.DataFrame(columns=self.features_all)
+        df = self.handle_stack_models(df)
+
         df = self.handle_mid(df)
         df = self.handle_feat_float(df)
         df = self.handle_feat_encoded(df)
@@ -796,7 +615,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             lambda x: x.str.lower().replace(' ', '', regex=True).replace("nodatafound',value:'n/a", "nan",
                                                                          regex=False).replace("nodatafound", "nan",
                                                                                               regex=False))
-
+        self.handle_processor(df)
         self.encode_feat_grouped(df)
 
         time_start = time.time()
@@ -811,11 +630,11 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         df_encoded_all[self.features_cat + self.features_grouped_encoded] = df_encoded_cat
 
         # Num processing
-        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated].astype(float)
+        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names].astype(float)
         df_num = df_num.fillna(self.fillna_val)
         # if not df_num.empty:
         #     df_num = self.scaler.transform(df_num.fillna(self.fillna_val))
-        df_encoded_all[self.features_num + self.features_num_encoded + self.features_num_calculated] = df_num
+        df_encoded_all[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names] = df_num
 
         return df_encoded_all
 
@@ -830,6 +649,10 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
     def fit(self, df, y=None, features_dict={}, **fit_params):
         """fit is called only when training, this should not be called when predicting"""
+        self.first_level_models = features_dict.get('first_level_models', {})
+        self.first_level_models_field_names = [f'predict_proba_{k}' for k in self.first_level_models.keys()]
+        df = self.handle_stack_models(df)
+
         self.features_num_encoded = features_dict[FEATURES_NUM_ENCODED_KEY]
         if FEATURES_NUM_BIN_PROFILE_KEY in features_dict:
             self.features_bin_profile = features_dict[FEATURES_NUM_BIN_PROFILE_KEY]
@@ -839,13 +662,6 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
         if self.group_util is None:
             self.group_util = GroupUtil(features_dict.get('group_dict', {}))
-
-        if self.eco_bin_util is None:
-            self.eco_bin_util = EcoBinUtil(features_dict.get('date_increment_bin_dict', {}),
-                                           features_dict.get('added_years_bin_dict', {}))
-
-        if self.txn_hour_util is None:
-            self.txn_hour_util = TxnHourUtil(features_dict.get('txn_hour_group_dict', {}))
 
         self.use_cat_encoder = features_dict.get('use_cat_encoder', True)
         self.features_cat = features_dict[FEATURES_CAT_KEY]
@@ -860,16 +676,12 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.feat_grouped = features_dict[FEATURES_GROUPED]
         self.features_grouped_encoded = ["-".join(feat_group) for feat_group in self.feat_grouped]
         self.additional_fields = features_dict[ADDITIONAL_FIELDS_KEY]
-        if FAILED_DECLINE_TYPE in self.features_cat_and_encoded:
-            if self.df_decline_type is None:
-                self.df_decline_type = features_dict['df_decline_type']
-                print('In fit, self.df_decline_type: {}'.format(self.df_decline_type.shape))
-
-            self.decline_type_util = DeclineTypeUtil(self.df_decline_type)
 
         df = self.handle_feat_float(df)
         df = self.handle_feat_encoded(df)
         df = self.handle_feat_num_encoded(df)
+
+
         df = df.reset_index()
         print("self.features_all: ", self.features_all)
         print('In fit, self.features_cat: {}'.format(self.features_cat))
@@ -879,7 +691,8 @@ class PreProcessing(BaseEstimator, TransformerMixin):
                                                                                               regex=False))
 
         self.encode_feat_grouped(df)
-        self.features_all = self.features_cat + self.features_grouped_encoded + self.features_num + self.features_num_encoded + self.features_num_calculated
+        self.features_all = self.features_cat + self.features_grouped_encoded + self.features_num + self.features_num_encoded + \
+                            self.features_num_calculated + self.first_level_models_field_names
 
         time_start = time.time()
         #         te = EnhancedTargetEncoder(cols=self.features_cat_and_encoded, handle_unknown='impute', min_samples_leaf=25, impute_missing=True)
@@ -897,7 +710,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             print("# not using cat encoder")
 
         # Fit a scaler
-        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated].astype(float)
+        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names].astype(float)
         self.fillna_val = df_num.mean()  # .median()
         # df_num = df_num.fillna(self.fillna_val)
         # if not df_num.empty:

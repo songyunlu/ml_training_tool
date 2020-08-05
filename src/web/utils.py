@@ -69,6 +69,12 @@ def days_between_ds(df):
     d2 = to_date(df[TXN_DATE_IN_STR])
     return abs((d2 - d1).days)
 
+#Get difference between txn_date an initial renewal date(calendar attempt #1) in days.
+def init_days_between_ds(df):
+    d1 = to_date(df["first_calendar_attempt_date"])
+    d2 = to_date(df[TXN_DATE_IN_STR])
+    return abs((d2 - d1).days)
+
 
 def to_day(datestr):
     """Converts date string to day, e.g: '2018-05-02 00:00:00' to be '2' """
