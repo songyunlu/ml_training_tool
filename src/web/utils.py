@@ -18,10 +18,10 @@ from calendar import monthrange
 TXN_DATE_IN_STR = "transaction_date_in_string"
 DAY_OF_MONTH = "day_of_month"
 MONTH = 'month'
-FEATURES_CAT = 'FEATURES_CAT'
-FEATURES_NUM = 'FEATURES_NUM'
-FEATURES_NUM_ENCODED = 'FEATURES_NUM_ENCODED'
-FEATURES_ENCODED = 'FEATURES_ENCODED'
+# FEATURES_CAT = 'FEATURES_CAT'
+# FEATURES_NUM = 'FEATURES_NUM'
+# FEATURES_NUM_ENCODED = 'FEATURES_NUM_ENCODED'
+# FEATURES_ENCODED = 'FEATURES_ENCODED'
 
 WEEK_OF_MONTH = 'week_of_month'
 DAY_OF_WEEK = 'day_of_week'
@@ -69,6 +69,12 @@ def days_between_ds(df):
     d2 = to_date(df[TXN_DATE_IN_STR])
     return abs((d2 - d1).days)
 
+#Get difference between txn_date an initial renewal date(calendar attempt #1) in days.
+def init_days_between_ds(df):
+    d1 = to_date(df["first_calendar_attempt_date"])
+    d2 = to_date(df[TXN_DATE_IN_STR])
+    return abs((d2 - d1).days)
+
 
 def to_day(datestr):
     """Converts date string to day, e.g: '2018-05-02 00:00:00' to be '2' """
@@ -109,6 +115,47 @@ def to_weekday(datestr):
     return date.isoweekday()
 
 
+def to_min_segment(datestr):
+    """Returns min segment of either 0, 15, 30 or 45"""
+    min_segment = 0
+    try:
+        minute = time.strptime(datestr, "%Y-%m-%d %H:%M:%S").tm_min
+        if minute < 15:
+            min_segment = 0
+        elif minute < 30:
+            min_segment = 15
+        elif minute < 45:
+            min_segment = 30
+        elif minute < 60:
+            min_segment = 45
+    except:
+        print(f'Exception occurred when transforming to min_segment. Time value: {datestr}')
+
+    return min_segment
+
+
+def hour_min_segment(datestr):
+    """Returns hour with min segment of either 0, 15, 30 or 45"""
+    hour = 0
+    min_segment = 0
+    try:
+        _time = time.strptime(datestr, "%Y-%m-%d %H:%M:%S")
+        hour = _time.tm_hour
+        minute = _time.tm_min
+        if minute < 15:
+            min_segment = 0
+        elif minute < 30:
+            min_segment = 15
+        elif minute < 45:
+            min_segment = 30
+        elif minute < 60:
+            min_segment = 45
+    except:
+        print(f'Exception occurred when transforming to txn_hour_min_segment. Time value: {datestr}')
+
+    return '{:0>2d}:{:0>2d}'.format(hour, min_segment)
+
+
 def daterange(date1_str, date2_str):
     start_date = to_date(date1_str + ' 00:00:00')
     end_date = to_date(date2_str + ' 00:00:00')
@@ -120,6 +167,11 @@ def daterange(date1_str, date2_str):
 
 def isnumeric(dtype: str):
     return dtype.startswith('float') or dtype.startswith('int')
+
+
+def num_of_days(datestr):
+    dt = to_date(datestr)
+    return monthrange(dt.year, dt.month)[1]
 
 
 def to_date_cc_expire_date(datestr):
@@ -142,10 +194,10 @@ def is_expired(row):
 def is_weekend(day):
     """Determines whether the given day is weekend
     Args:
-        day (str) : should be a lower case day_of_month. e.g: sunday, saturday
+        day (str) : should be a lower case day_of_month. e.g: sunday, saturday, friday
     Return True (bool) if the day is either sunday or saturday
     """
-    if day in ['saturday', 'sunday']:
+    if day in ['saturday', 'sunday', 'friday']:
         return True
     return False
 
@@ -153,11 +205,14 @@ def is_weekend(day):
 def cc_month(cc_expiration_date):
     cc_expiration_date = cc_expiration_date.replace('/', '')
     expire_month = None
-    if len(cc_expiration_date) == 3:
-        expire_month = int(cc_expiration_date[:1])
-    elif len(cc_expiration_date) == 4:    
-        expire_month = int(cc_expiration_date[:2])
-                     
+    try:
+        if len(cc_expiration_date) == 3:
+            expire_month = int(cc_expiration_date[:1])
+        elif len(cc_expiration_date) == 4:
+            expire_month = int(cc_expiration_date[:2])
+    except:
+        expire_month = None
+
     return expire_month
 
 

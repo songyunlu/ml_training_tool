@@ -11,3 +11,4 @@ spark-sklearn==0.3.0
 pyspark==2.4.4
 findspark==1.3.0
 requests==2.22.0
+catboost==0.18.1
