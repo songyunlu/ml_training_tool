@@ -1,63 +1,69 @@
-from src.web.preprocessing import PreProcessing
-from src.web.preprocessing import make_pipeline
-from importlib import import_module
-import sys
-from sklearn.preprocessing import Imputer
-from sklearn.externals import joblib
-from pickle import HIGHEST_PROTOCOL
-import os
-from os import path
-
 import datetime
+import io
 import json
-from cassandra.cluster import Cluster
-from cassandra.auth import PlainTextAuthProvider
-# import repositorytools
+import os
+import sys
 import time
-from sklearn import cross_validation
+from importlib import import_module
+from os import path
+from pickle import HIGHEST_PROTOCOL
+from shutil import copyfile
+
+import boto3
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from cassandra.auth import PlainTextAuthProvider
+from cassandra.cluster import Cluster
 from sklearn import metrics
 from sklearn.dummy import DummyClassifier
 from sklearn.externals import joblib
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import Imputer
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
-import requests
-from shutil import copyfile
 
-from sklearn.model_selection import GridSearchCV
-from src.web.repository import repository as repo
+from src.web.preprocessing import PreProcessing
+from src.web.preprocessing import make_pipeline
 from src.web.repository import artifact as art
-import boto3
-import io
-import pandas as pd
+from src.web.repository import repository as repo
+
+from os import path
 
 WORK_DIR = '/var/spark/ml_files/'
 MODELS_PATH = "models"
 MODEL_DIR = WORK_DIR + MODELS_PATH
-cassandra_endpoint = '10.81.12.121' #'10.62.1.118'
-auth_provider = PlainTextAuthProvider(username='mlprw', password='q4RgwD$wK7*z')
-cluster = Cluster([cassandra_endpoint], auth_provider=auth_provider)
-mlp_session = cluster.connect('dev_mlpks')
 bucket = 'dr-machine-learning-sandbox'
 s3 = boto3.resource('s3')
 
 S3_BUCKET = 'dr-billing-opt'
 S3_TRAIN_DIR = 'training_files'
 
+cassandra_endpoint = '10.81.12.121'  # '10.62.1.118'
+auth_provider = PlainTextAuthProvider(username='mlprw', password='q4RgwD$wK7*z')
+try:
+    cluster = Cluster([cassandra_endpoint], auth_provider=auth_provider)
+    mlp_session = cluster.connect('dev_mlpks')
+except:
+    print('cannot connect to cassandra')
+
+
 def read_from(file_path, usecols=None, s3_dir=None):
-    s3 = boto3.client('s3')
-    if s3_dir:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=f'{s3_dir}/{file_path}')
+    if path.exists(file_path):
+        obj = file_path
     else:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=f'{S3_TRAIN_DIR}/{file_path}')
+        s3 = boto3.client('s3')
+        if s3_dir:
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=f'{s3_dir}/{file_path}')
+        else:
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=f'{S3_TRAIN_DIR}/{file_path}')
+        obj = io.BytesIO(obj['Body'].read())
+
     if usecols:
-        df = pd.read_csv(io.BytesIO(obj['Body'].read()), usecols=usecols)
+        df = pd.read_csv(obj, usecols=usecols)
     else:
-        df = pd.read_csv(io.BytesIO(obj['Body'].read()))
+        df = pd.read_csv(obj)
+
     return df
+
 
 def write_model(model, model_name, idx=None):
     """Write the model into a file """
@@ -81,7 +87,7 @@ def write_model_s3(model, model_name, idx=None):
     return (file, file_name)
 
 
-REPOSITORY_URL = 'http://nexus-master.digitalriverws.net/nexus/repository' #'http://10.48.48.10/nexus' #'http://nexus.digitalriverws.net/nexus'
+REPOSITORY_URL = 'http://nexus-master.digitalriverws.net/nexus/repository'  # 'http://10.48.48.10/nexus' #'http://nexus.digitalriverws.net/nexus'
 REPO_USER = 'deployment'
 REPO_PWD = 'deployment123'
 REPO_ID = 'foundationreleases'
@@ -89,17 +95,19 @@ REPO_GROUP = 'com.digitalriver.prediction-service'
 
 PREPROCESS_DIR = 'src/web/'
 
+
 def insert_model_info(model_id, version, file_name, desc, model_type, algorithm='XGBClassifier', hyper_parameter=None, eval_metrics=None, extended_att=None, features_dict={}):
     """Inserts model info into Cassandra table"""
     if not extended_att:
-        extended_att= "{}"
+        extended_att = "{}"
 
     mlp_session.execute(
         """
         INSERT INTO ml_model_storage (model_type, model_id, version, features_cat, features_encoded, features_num, repo_path, description, creation_date, modification_date, algorithm, hyper_parameter, eval_metrics, extended_attributes)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (model_type, model_id, version, json.dumps(features_dict['FEATURES_CAT']), json.dumps(features_dict['FEATURES_ENCODED']), json.dumps(features_dict['FEATURES_NUM']), file_name, desc, datetime.datetime.utcnow(), datetime.datetime.utcnow(), algorithm, hyper_parameter, eval_metrics, extended_att)
+        (model_type, model_id, version, json.dumps(features_dict['FEATURES_CAT']), json.dumps(features_dict['FEATURES_ENCODED']), json.dumps(features_dict['FEATURES_NUM']), file_name, desc,
+         datetime.datetime.utcnow(), datetime.datetime.utcnow(), algorithm, hyper_parameter, eval_metrics, extended_att)
 
     )
     print("Model %s version %d is inserted into model repo" % (model_id, version))
@@ -166,7 +174,7 @@ def get_feat_importances(pipe, alg_name, df_features):
     return feature_importance_columns, feature_importance_vals, sorted_idx
 
 
-def display_feature_importance(pcols, pvals, sorted_idx, model_name=None):
+def display_feature_importance(pcols, pvals, sorted_idx, model_name=None, output_dir=None):
     pos = np.arange(sorted_idx.shape[0]) + .5
     plt.figure(figsize=(8, 12))
     plt.barh(pos, pvals, align='center')
@@ -174,11 +182,31 @@ def display_feature_importance(pcols, pvals, sorted_idx, model_name=None):
     plt.xlabel('Relative Importance')
     plt.title('Variable Importance')
     plt.tight_layout()
-    if model_name:
-        plt.savefig(f'src/web/feat_importance/{model_name}_feat_importance.png')
+    if output_dir:
+        plt.savefig(f'{output_dir}/feature_importance.png')
+    elif model_name:
+        plt.savefig(f'src/web/feat_importance/{model_name}_feature_importance.png')
 
 
-def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=None, features_dict={}, test_data=None, metrics_feedback_url=None):
+def save_feature_importance(pcols, pvals, output_dir=None):
+    feature_importance = {}
+    for i in range(len(pcols)):
+        feature_importance[pcols[i]] = pvals[i]
+
+    with open(f'{output_dir}/feature.importance', 'w') as feature_importance_out:
+        json.dump(feature_importance, feature_importance_out, ensure_ascii=False, indent=4)
+
+
+def save_metrics(metrics_type=None, metrics_payload=None, output_dir=None):
+    if metrics_payload is None:
+        metrics_payload = {}
+
+    if output_dir and metrics_type is not None:
+        with open(f'{output_dir}/{metrics_type}.metrics', 'w') as metrics_json:
+            json.dump(metrics_payload, metrics_json, ensure_ascii=False, indent=4)
+
+
+def build_and_train(df, clf, param_grid, alg_name, model_file='', best_param=None, features_dict={}, test_data=None, output_dir=None):
     if features_dict is None:
         features_dict = {}
 
@@ -192,7 +220,7 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
     result_dict = {}
     if test_data is None:
         x_train, x_test, y_train, y_test = train_test_split(df_X, df[LABEL], \
-                                                                             test_size=0.1, random_state=42)
+                                                            test_size=0.1, random_state=42)
     else:
         print("# Using assigned test_data")
         x_train, x_test, y_train, y_test = df_X, test_data[features_dict['FIELDS']], df[LABEL], test_data[LABEL]
@@ -213,7 +241,7 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
 
         #         pipe = make_pipeline(PreProcessing(), imputer, clf())
         pipe = make_pipeline(PreProcessing(), clf())
-        score = 'average_precision'  #'f1' #'accuracy' #  ['accuracy','precision_macro', 'recall_macro', 'f1_macro']
+        score = 'average_precision'  # 'f1' #'accuracy' #  ['accuracy','precision_macro', 'recall_macro', 'f1_macro']
         print("# Tuning hyper-parameters for %s" % score)
 
         pipe_param_grid = {model_prefix + k: v for k, v in param_grid.items()}
@@ -230,28 +258,27 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
         clf_gs = clf_gs.fit(x_train, y_train, preprocessing__features_dict=features_dict, **fit_params)
 
         print('clf_gs: {}'.format(clf_gs))
-        best_model = clf_gs.best_estimator_  #clf_gs.estimator.named_steps[alg_name]
+        best_model = clf_gs.best_estimator_  # clf_gs.estimator.named_steps[alg_name]
         print('best params: {}'.format(best_model.get_params(deep=True)))
         #         result_dict['hyper_params'] = best_model.get_params(deep=True) #clf_gs.best_params_
         print("# Grid scores on development set:")
         means = clf_gs.cv_results_['mean_test_score']
         stds = clf_gs.cv_results_['std_test_score']
         zipped = list(zip(means, stds, clf_gs.cv_results_['params']))
-        for mean, std, params in sorted(zipped, key = lambda x: x[0]) :
-            print("%0.3f (+/-%0.03f) for %r"% (mean, std * 2, params))
+        for mean, std, params in sorted(zipped, key=lambda x: x[0]):
+            print("%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params))
 
         best_parameters = best_model.get_params(deep=True)
         print("# Best parameters set found on development set: {}".format(best_parameters))
 
-        best_parameters = {k.replace(model_prefix,''): v for k, v in best_parameters.items()}
+        best_parameters = {k.replace(model_prefix, ''): v for k, v in best_parameters.items()}
         print('best params: {}'.format(best_parameters))
         pipe = best_model
         y_pred_train = pipe.predict(x_train).round()
     else:
-        best_parameters= best_param
+        best_parameters = best_param
         #         pipe = make_pipeline(PreProcessing(), imputer, clf(**best_parameters))
         pipe = make_pipeline(PreProcessing(), clf(**best_parameters))
-
 
     if y_pred_train is None:
         # if model_file != '':
@@ -264,7 +291,6 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
             y_pred_train = pipe.fit_predict(x_train, y_train, preprocessing__features_dict=features_dict, **fit_params).round()
         else:
             y_pred_train = pipe.fit_predict(x_train, y_train, preprocessing__features_dict=features_dict).round()
-
 
     result_dict['hyper_params'] = best_parameters
     print("best_parameters ", best_parameters)
@@ -282,9 +308,7 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
     train_class_report = metrics.classification_report(y_train, y_pred_train)
     print(train_class_report)
 
-
     y_pred_test = pipe.predict(x_test).round()
-
 
     training_time = time.time() - time_start
     print("# training time:", training_time)
@@ -315,7 +339,8 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
 
     feat_importance_cols, feat_importance_vals, sorted_idx = get_feat_importances(pipe, alg_name, df_features)
     model_name = features_dict.get('model_name', None)
-    display_feature_importance(feat_importance_cols, feat_importance_vals, sorted_idx, model_name)
+    display_feature_importance(feat_importance_cols, feat_importance_vals, sorted_idx, model_name, output_dir)
+    save_feature_importance(feat_importance_cols, feat_importance_vals, output_dir)
 
     result_dict['feature_importance_columns'] = str(feat_importance_cols)
     result_dict['feature_importance_vals'] = str(feat_importance_vals)
@@ -326,7 +351,6 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
     result_dict['test_auc'] = test_auc
 
     print("accuracy_dummy .....:", accuracy_dummy)
-
 
     print("test accuracy:", test_accuracy)
     print("test auc:", test_auc)
@@ -341,24 +365,25 @@ def build_and_train(df, clf, param_grid, alg_name, model_file ='', best_param=No
 
     result_dict['average_precision'] = avg_precision
 
-    save_metrics(metrics_feedback_url, {
-        'type': 'CROSS_VALIDATION',
-        'accuracy': train_accuracy,
-        'rocAuc': train_auc,
-    })
-    save_metrics(metrics_feedback_url, {
-        'type': 'TESTING',
-        'accuracy': test_accuracy,
-        'rocAuc': test_auc,
-        'confusionMatrix': np.array2string(conf_mx, separator=','),
-        'prAuc': avg_precision
-    })
+    save_metrics(
+        'cross_validation',
+        {
+            'type': 'CROSS_VALIDATION',
+            'accuracy': train_accuracy,
+            'rocAuc': train_auc
+        },
+        output_dir
+    )
+    save_metrics(
+        'testing',
+        {
+            'type': 'TESTING',
+            'accuracy': test_accuracy,
+            'rocAuc': test_auc,
+            'confusionMatrix': np.array2string(conf_mx, separator=','),
+            'prAuc': avg_precision
+        },
+        output_dir
+    )
 
     return pipe, result_dict
-
-def save_metrics(url=None, payload=None):
-    if payload is None:
-        payload = {}
-
-    if url is not None:
-        requests.post(url, json=payload)
