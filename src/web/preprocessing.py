@@ -1,6 +1,7 @@
 from src.web.utils import *
 import numpy as np
 import pandas as pd
+from SortedSet.sorted_set import SortedSet
 
 PAY_AMOUNT_USD = "payment_amount_usd"
 
@@ -43,6 +44,11 @@ FAILED_RESPONSE_CODE = 'failed_response_code'
 FAILED_ATTEMPT_DATE = 'failed_attempt_date'
 FAILED_DAY_OF_MONTH = 'failed_day_of_month'
 
+first_cal_response_message_fields = ['first_cal_response_message_1', 'first_cal_response_message_2', 'first_cal_response_message_3']
+first_cal_response_code_fields = ['first_cal_response_code_1', 'first_cal_response_code_2', 'first_cal_response_code_3']
+previous_cal_response_code_fields = ['previous_cal_response_code_1', 'previous_cal_response_code_2', 'previous_cal_response_code_3']
+
+BASE = 'Base'
 
 def processor_mid_changed(row):
     failed_payment_service_id = row['failed_payment_service_id']
@@ -266,6 +272,14 @@ class TxnHourUtil:
         return result
 
 
+def convert_str_to_sorted_set(s):
+    """This can be used to convert failed response code fields that are
+    consolidated in given s to be a sorted unqiue values set"""
+    x = str(s).replace(' ', '').replace('.0', '')
+    x = SortedSet(x.split(','))
+    return ",".join(x)
+
+
 class PreProcessing(BaseEstimator, TransformerMixin):
     """Custom Pre-Processing estimator for Best Retry
     """
@@ -376,13 +390,47 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             try:
                 df[DAYS_BETWEEN] = df.apply(days_between_ds, axis=1)
             except ValueError:
-                pass
+                df[DAYS_BETWEEN] = None
 
-        if 'days_between_first_cal' in self.features_encoded and 'days_between_first_cal' not in df.columns:
+        if 'days_between_from_first_cal' in self.features_cat_and_encoded and 'days_between_from_first_cal' not in df.columns:
             try:
-                df["days_between_first_cal"] = df.apply(init_days_between_ds, axis=1)
+                df["days_between_from_first_cal"] = df.apply(init_days_between_ds, axis=1)
             except ValueError:
-                pass
+                df["days_between_from_first_cal"] = df[DAYS_BETWEEN]
+
+        if 'failed_decline_type_from_first_cal' in self.features_cat_and_encoded and 'failed_decline_type_from_first_cal' not in df.columns:
+            try:
+                failed_decline_type_from_first_cal = BASE
+                response_messages = ','.join(df[x].at[0] or '' for x in first_cal_response_message_fields if x in df.columns).replace(',', '')
+                if response_messages:
+                    failed_decline_type_from_first_cal = decline_type_util_v2.decline_type(response_messages)
+
+                if failed_decline_type_from_first_cal != BASE:
+                    df['failed_decline_type_from_first_cal'] = failed_decline_type_from_first_cal
+                else:
+                    df['failed_decline_type_from_first_cal'] = df['failed_decline_type']
+            except ValueError:
+                df["failed_decline_type_from_first_cal"] = df['failed_decline_type']
+
+        if 'failed_response_codes_from_first_cal' in self.features_cat_and_encoded and 'failed_response_codes_from_first_cal' not in df.columns:
+            try:
+                response_codes = ','.join(df[x].at[0] or '' for x in first_cal_response_code_fields if x in df.columns)
+                if response_codes:
+                    df['failed_response_codes_from_first_cal'] = response_codes
+                    df['failed_response_codes_from_first_cal'] = df.failed_response_codes_from_first_cal.apply(convert_str_to_sorted_set)
+
+            except ValueError:
+                df["failed_decline_type_from_first_cal"] = df['failed_response_code']
+
+        if 'failed_response_codes_from_previous_cal' in self.features_cat_and_encoded and 'failed_response_codes_from_previous_cal' not in df.columns:
+            try:
+                response_codes = ','.join(df[x].at[0] or '' for x in previous_cal_response_code_fields if x in df.columns)
+                if response_codes:
+                    df['failed_response_codes_from_previous_cal'] = response_codes
+                    df['failed_response_codes_from_previous_cal'] = df.failed_response_codes_from_previous_cal.apply(convert_str_to_sorted_set)
+
+            except ValueError:
+                df["failed_response_codes_from_previous_cal"] = df['failed_response_code']
 
         if 'num_of_days' in self.features_cat_and_encoded:
             df['num_of_days'] = df[TXN_DATE_IN_STR].apply(num_of_days)
@@ -407,15 +455,17 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         if "cc_month" in self.features_cat_and_encoded and "cc_month" not in df.columns:
             df['cc_month'] = df["cc_expiration_date"].apply(cc_month)
 
-        segment_num_group = [0, 1, 2, 3, 4, 5, 6, 7, 8, 15, 20, 25, 30, 40, 50, 70, 100, 150]
-        # duration_group = [0, 1, 3, 10, 23, 25, 27, 32, 59, 62, 70, 80, 90, 100, 120, 130, 150, 200, 300, 363, 368, 373,729, 733, 1000, 2000]
-        duration_group = [0, 3, 6, 9, 13, 17, 20, 25, 27, 33, 39, 43, 62, 70, 80, 88, 94, 100, 118, 125, 130, 146, 155, 176, 184, 200, 213, 230, 263, 300, 363, 368, 373,729, 733, 1000, 2000]
-
-        if "segment_num" in df.columns:
+        if "card_info_is_empty" in self.features_cat_and_encoded and "card_info_is_empty" not in df.columns:
             try:
-                df['segment_num'] = df['segment_num'].astype(int)
+                df['card_info_is_empty'] = (df['card_brand'] == '') & (df['card_category'] == '')
             except:
-                df['segment_num'] = -1
+                df['card_info_is_empty'] = None
+
+        segment_num_group = [-1, 1, 2, 3, 4, 5, 6, 7, 8, 15, 20, 25, 30, 40, 50, 70, 100, 150]
+        duration_group = [0, 3, 6, 9, 13, 17, 20, 25, 27, 33, 39, 43, 62, 70, 80, 88, 94, 100, 118, 125, 130, 146, 155, 176, 184, 200, 213, 230, 263, 300, 363, 368, 373,729, 733, 1000, 2000]
+        txn_hour_group = [0, 2, 6, 10, 14, 18, 22, 25]
+        amount_group = [-1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 170, 190, 210, 250, 300, 400, 500, 1000, 1500, 2000, 5000, 10000, 20000]
+
 
         if "segment_num_group" in self.features_cat_and_encoded and "segment_num_group" not in df.columns:
             try:
@@ -423,12 +473,19 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             except:
                 df['segment_num_group'] = None
 
-        if "duration" in df.columns:
+        if "payment_amount_group" in self.features_cat_and_encoded and "payment_amount_group" not in df.columns:
             try:
-                df['duration'] = df['duration'].astype(int)
+                df['payment_amount_group'] = pd.cut(df['payment_amount_usd'], amount_group).astype(str).str.replace('.0', '', regex=False)
             except:
-                df['duration'] = -1
+                df['payment_amount_group'] = 'nan'
 
+        if "is_first_renewal" in self.features_cat_and_encoded and "is_first_renewal" not in df.columns:
+            try:
+                df['is_first_renewal'] = (df['segment_num'] < 2) & (df['segment_num'] >= 0)
+            except:
+                df['is_first_renewal'] = None
+
+        if "duration" in df.columns:
             df.loc[(df['duration'] == 28) | (df['duration'] == 29) | (df['duration'] == 31), 'duration'] = 30
             df.loc[(df['duration'] == 366), 'duration'] = 365
             df.loc[(df['duration'] == 731), 'duration'] = 730
@@ -439,18 +496,17 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             except:
                 df['sub_duration_group'] = None
 
-        if "sub_age" in df.columns:
-            try:
-                df['sub_age'] = df['sub_age'].astype(int)
-            except:
-                df['sub_age'] = -1
-
         if "sub_age_group" in self.features_cat_and_encoded and "sub_age_group" not in df.columns:
             try:
                 df['sub_age_group'] = pd.cut(df['sub_age'], duration_group).astype(str).str.replace('.0', '', regex=False)
             except:
                 df['sub_age_group'] = None
 
+        if "txn_hour_group" in self.features_cat_and_encoded and "txn_hour_group" not in df.columns:
+            try:
+                df['txn_hour_group'] = pd.cut(df['transaction_hour'], txn_hour_group).astype(str).str.replace('.0', '', regex=False)
+            except:
+                df['txn_hour_group'] = None
 
         if "issuer_country" in self.features_cat_and_encoded and "billing_country" in df.columns:
             df["issuer_country"] = df["issuer_country"].replace('', np.nan).fillna(df["billing_country"])
@@ -466,11 +522,27 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             df['bank_name'] = df["bank_name"].astype(str).apply(lambda x: x.lower().replace(' ', '').replace("nationalassociation", "n.a").replace(",", ""))
 
         if "card_category" in df.columns:
+            try:
+                df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'card_category'] = 'american_express'
+                df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'funding_source'] = 'american_express'
+            except Exception as ex:
+                print(ex)
+
             df['card_category'] = df["card_category"].astype(str).apply(lambda x: x.lower().replace(' ', '').replace(",", ""))
 
-        if "card_brand" in df.columns and "bank_name" in df.columns:
-            df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'bank_name'] = 'american_express'
-            df.loc[(df.card_brand.str.lower().str.startswith('discover', na=False)), 'bank_name'] = 'discover'
+        if "bank_name" in df.columns:
+            try:
+                df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'bank_name'] = 'american_express'
+                df.loc[(df.card_brand.str.lower().str.startswith('discover', na=False)), 'bank_name'] = 'discover'
+            except Exception as ex:
+                print(ex)
+
+        if "card_class" in df.columns:
+            try:
+                df.loc[(df.card_brand.str.lower().str.startswith('american', na=False)), 'card_class'] = 'american_express'
+                df.loc[(df.card_brand.str.lower().str.startswith('discover', na=False)), 'card_class'] = 'discover'
+            except Exception as ex:
+                print(ex)
 
         print("# Finish handle_feat_encoded.")
         return df
@@ -532,7 +604,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         #             df["payment_mid_bin"] = df.apply(self.payment_mid_bin_util.payment_mid_bin, axis=1)
 
         if "txn_amount_bin_max_per_date_diff" in self.features_num_encoded:
-                df["txn_amount_bin_max_per_date_diff"] = df.apply(self.group_util.date_max_diff, axis=1)
+            df["txn_amount_bin_max_per_date_diff"] = df.apply(self.group_util.date_max_diff, axis=1)
 
         if "txn_amount_bin_max_99_per_date_diff" in self.features_num_encoded:
             df["txn_amount_bin_max_99_per_date_diff"] = df.apply(self.group_util.date_max_99_diff, axis=1)
@@ -610,11 +682,13 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         df = self.handle_feat_encoded(df)
         df = self.handle_feat_num_encoded(df)
         df = df.reset_index()
-        df[self.features_cat_and_encoded] = df[self.features_cat_and_encoded].fillna('nan')
+        df[self.features_cat_and_encoded] = df[self.features_cat_and_encoded].fillna('')
         df[self.features_cat_and_encoded] = df[self.features_cat_and_encoded].astype(str).apply(
-            lambda x: x.str.lower().replace(' ', '', regex=True).replace("nodatafound',value:'n/a", "nan",
-                                                                         regex=False).replace("nodatafound", "nan",
-                                                                                              regex=False))
+            lambda x: x.str.lower().replace(' ', '', regex=True)
+                .replace("nodatafound',value:'n/a", "", regex=False)
+                .replace("nodatafound", "", regex=False)
+                .replace("nodatafound'value:'n/a", "",regex=False))
+
         self.handle_processor(df)
         self.encode_feat_grouped(df)
 
