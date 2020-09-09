@@ -188,6 +188,11 @@ def display_feature_importance(pcols, pvals, sorted_idx, model_name=None, output
         plt.savefig(f'src/web/feat_importance/{model_name}_feature_importance.png')
 
 
+def roc_auc(y, p):
+    fpr, tpr, threshold = metrics.roc_curve(y, p)
+    return metrics.auc(fpr, tpr)
+
+
 def save_feature_importance(pcols, pvals, output_dir=None):
     feature_importance = {}
     for i in range(len(pcols)):
@@ -303,12 +308,24 @@ def build_and_train(df, clf, param_grid, alg_name, model_file='', best_param=Non
     print("training accuracy:", train_accuracy)
 
     train_auc = metrics.roc_auc_score(y_train, y_pred_train)
+
+    y_proba_train = pipe.predict_proba(x_train)
+    y_proba_train_array = np.asarray(list(map(lambda x: x[1], y_proba_train.tolist())))
+    train_roc_auc = roc_auc(y_train, y_proba_train_array)
+
+    # result_dict['train_auc'] = train_auc
+    result_dict['train_auc'] = train_roc_auc
+
     print("training auc:", train_auc)
+    print("training ROC AUC:", train_roc_auc)
 
     train_class_report = metrics.classification_report(y_train, y_pred_train)
     print(train_class_report)
 
-    y_pred_test = pipe.predict(x_test).round()
+
+    y_pred_test = pipe.predict(x_test)
+    y_proba_test = pipe.predict_proba(x_test)
+    y_proba_test_array = np.asarray(list(map(lambda x: x[1], y_proba_test.tolist())))
 
     training_time = time.time() - time_start
     print("# training time:", training_time)
@@ -326,8 +343,7 @@ def build_and_train(df, clf, param_grid, alg_name, model_file='', best_param=Non
     result_dict['accuracy_dummy'] = accuracy_dummy
     result_dict['train_accuracy'] = train_accuracy
     result_dict['test_accuracy'] = test_accuracy
-    #     print_accuracy_report(pipe, x_train, y_train, num_validations=3)
-    #     print(metrics.classification_report(y_test, y_pred_test))
+
     test_class_report = metrics.classification_report(y_test, y_pred_test)
     result_dict['train_class_report'] = train_class_report
     result_dict['test_class_report'] = test_class_report
@@ -347,30 +363,36 @@ def build_and_train(df, clf, param_grid, alg_name, model_file='', best_param=Non
     result_dict['sorted_idx'] = str(sorted_idx)
 
     test_auc = metrics.roc_auc_score(y_test, y_pred_test)
+    test_roc_auc = roc_auc(y_test, y_proba_test_array)
+
     result_dict['train_auc'] = train_auc
     result_dict['test_auc'] = test_auc
+    result_dict['train_ROC_AUC'] = train_roc_auc
+    result_dict['test_ROC_AUC'] = test_roc_auc
 
     print("accuracy_dummy .....:", accuracy_dummy)
 
     print("test accuracy:", test_accuracy)
     print("test auc:", test_auc)
+    print("test ROC AUC:", test_roc_auc)
+
     print(test_class_report)
     print("# confusion_matrix -  test:\n", conf_mx)
     result_dict['conf_mx'] = conf_mx.tolist()
 
     y_pred_scores = pipe.predict_proba(x_test)
     y_scores = np.asarray(list(map(lambda x: x[1], y_pred_scores.tolist())))
-    avg_precision = metrics.average_precision_score(y_test, y_scores)
-    print(f"average precision: {avg_precision}")
+    pr_auc = metrics.average_precision_score(y_test, y_scores)
+    print(f"PR AUC: {pr_auc}")
 
-    result_dict['average_precision'] = avg_precision
+    result_dict['PR_AUC'] = pr_auc
 
     save_metrics(
         'cross_validation',
         {
             'type': 'CROSS_VALIDATION',
             'accuracy': train_accuracy,
-            'rocAuc': train_auc
+            'rocAuc': train_roc_auc
         },
         output_dir
     )
@@ -379,9 +401,9 @@ def build_and_train(df, clf, param_grid, alg_name, model_file='', best_param=Non
         {
             'type': 'TESTING',
             'accuracy': test_accuracy,
-            'rocAuc': test_auc,
+            'rocAuc': test_roc_auc,
             'confusionMatrix': np.array2string(conf_mx, separator=','),
-            'prAuc': avg_precision
+            'prAuc': pr_auc
         },
         output_dir
     )
