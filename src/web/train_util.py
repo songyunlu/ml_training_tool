@@ -198,8 +198,9 @@ def save_feature_importance(pcols, pvals, output_dir=None):
     for i in range(len(pcols)):
         feature_importance[pcols[i]] = pvals[i]
 
-    with open(f'{output_dir}/feature.importance', 'w') as feature_importance_out:
-        json.dump(feature_importance, feature_importance_out, ensure_ascii=False, indent=4)
+    if output_dir:
+        with open(f'{output_dir}/feature.importance', 'w') as feature_importance_out:
+            json.dump(feature_importance, feature_importance_out, ensure_ascii=False, indent=4)
 
 
 def save_metrics(metrics_type=None, metrics_payload=None, output_dir=None):
