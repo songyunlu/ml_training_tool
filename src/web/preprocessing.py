@@ -191,98 +191,17 @@ class GroupUtil:
             result = val - float(row[PAY_AMOUNT_USD])
         return result
 
-
-class EcoBinUtil:
-    def __init__(self, date_increment_bin_dict, added_years_bin_dict):
-        self.date_increment_bin_dict = date_increment_bin_dict
-        self.added_years_bin_dict = added_years_bin_dict
-
-    def date_inc_bin(self, row):
-        result = self.date_increment_bin_dict.get((str(row['bin']), str(row['date_increment'])), -1)
-        return result
-
-    def added_years_bin(self, row):
-        result = self.added_years_bin_dict.get((str(row['bin']), str(row['added_expiry_years'])), -1)
-        return result
-
-
-class TxnHourUtil:
-
-    def __init__(self, group_dict):
-        self.group_dict = group_dict
-
-    def txn_hour_bin(self, row):
-        #         result = self.txn_hour_bin_dict.get((str(row['bin']), str(row['transaction_hour'])), -1)
-        result = self.group_dict.get("txn_hour_bin_dict", {}).get((str(row['bin']), str(row['transaction_hour'])), -1)
-
-        return result
-
-    def txn_hour_processor(self, row):
-        #         result = self.txn_hour_processor_dict.get((str(row['payment_service_id']), str(row['transaction_hour'])), -1)
-        result = self.group_dict.get("txn_hour_processor_dict", {}).get(
-            (str(row['payment_service_id']), str(row['transaction_hour'])), -1)
-        return result
-
-    def txn_hour_country(self, row):
-        #         result = self.txn_hour_country_dict.get((str(row['issuer_country']), str(row['transaction_hour'])), -1)
-        result = self.group_dict.get("txn_hour_country_dict", {}).get(
-            (str(row['issuer_country']), str(row['transaction_hour'])), -1)
-        return result
-
-    def txn_hour_site(self, row):
-        #         result = self.txn_hour_site_dict.get((str(row['site_id']), str(row['transaction_hour'])), -1)
-        result = self.group_dict.get("txn_hour_site_dict", {}).get((str(row['site_id']), str(row['transaction_hour'])),
-                                                                   -1)
-        return result
-
-    def txn_hour_bank_name(self, row):
-        bank_name = str(row['bank_name']).lower().replace(' ', '')
-        result = self.group_dict.get("txn_hour_bank_name_dict", {}).get((bank_name, str(row['transaction_hour'])), -1)
-        return result
-
-    def txn_hour_currency(self, row):
-        result = self.group_dict.get("txn_hour_currency_dict", {}).get(
-            (str(row['payment_currency']), str(row['transaction_hour'])), -1)
-        return result
-
-    def txn_hour_mid(self, row):
-        result = self.group_dict.get("txn_hour_mid_dict", {}).get(
-            (str(row['merchant_number']), str(row['transaction_hour'])), -1)
-        return result
-
-    def txn_hour_date(self, row):
-        result = self.group_dict.get("txn_hour_date_dict", {}).get(
-            (str(row['day_of_month']), str(row['transaction_hour'])), -1)
-        return result
-
-    def bin_hour_max_diff(self, row):
-        result = 0
-        hour_max = self.group_dict.get("bin_max_amt_per_hour_dict", {}).get(
-            (str(row['bin']), str(row['transaction_hour'])), 0)
-        if isinstance(hour_max, float) or isinstance(hour_max, int):
-            result = hour_max - float(row[PAY_AMOUNT_USD])
-        return result
-
-    def processor_hour_max_diff(self, row):
-        result = 0
-        processor_max = self.group_dict.get("processor_max_amt_per_hour_dict", {}).get(
-            (str(row['payment_service_id']), str(row['transaction_hour'])), 0)
-        if isinstance(processor_max, float) or isinstance(processor_max, int):
-            result = processor_max - float(row[PAY_AMOUNT_USD])
-        return result
-
-
-def convert_str_to_sorted_set(s):
-    """This can be used to convert failed response code fields that are
-    consolidated in given s to be a sorted unqiue values set"""
-    x = str(s).replace(' ', '').replace('.0', '')
-    x = SortedSet(x.split(','))
-    return ",".join(x)
-
+def get_hour(txn_hour_min_segment):
+    """Return transaction_hour from txn_hour with minute segment input"""
+    try:
+        return int(txn_hour_min_segment.split(':')[0])
+    except:
+        return -1
 
 class PreProcessing(BaseEstimator, TransformerMixin):
     """Custom Pre-Processing estimator for Best Retry
     """
+    default_txn_hour_group = [0, 2, 6, 10, 14, 18, 22, 25]
 
     def __init__(self):
         self.df_decline_type = None
@@ -305,11 +224,22 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.features_grouped_encoded = None
         self.additional_fields = None
         self.use_cat_encoder = True
+        self.txn_hour_group = []
 
         '''first_level_models is a dict consist of model_name as key and model_file as value'''
         self.first_level_models: dict = {}
-        self.first_level_models_field_names = []
+        # self.first_level_models_field_names = []
         pass
+
+    def convert_str_to_sorted_set(self, s):
+        """This can be used to convert failed response code fields that are
+        consolidated in given s to be a sorted unique values set"""
+        x = str(s).replace(' ', '').replace('.0', '')
+        response_codes = SortedSet(x.split(',')) - SortedSet([''])
+        unique_codes = response_codes - self.generic_decline_codes
+        if not unique_codes:
+            unique_codes = response_codes
+        return ",".join(unique_codes)
 
     def convert_sin(self, value, max_value, start=0):
         return np.sin((value - start) * (2. * np.pi / max_value))
@@ -417,17 +347,17 @@ class PreProcessing(BaseEstimator, TransformerMixin):
                 response_codes = ','.join(df[x].at[0] or '' for x in first_cal_response_code_fields if x in df.columns)
                 if response_codes:
                     df['failed_response_codes_from_first_cal'] = response_codes
-                    df['failed_response_codes_from_first_cal'] = df.failed_response_codes_from_first_cal.apply(convert_str_to_sorted_set)
+                    df['failed_response_codes_from_first_cal'] = df.failed_response_codes_from_first_cal.apply(self.convert_str_to_sorted_set)
 
             except ValueError:
-                df["failed_decline_type_from_first_cal"] = df['failed_response_code']
+                df["failed_response_codes_from_first_cal"] = df['failed_response_code']
 
         if 'failed_response_codes_from_previous_cal' in self.features_cat_and_encoded and 'failed_response_codes_from_previous_cal' not in df.columns:
             try:
                 response_codes = ','.join(df[x].at[0] or '' for x in previous_cal_response_code_fields if x in df.columns)
                 if response_codes:
                     df['failed_response_codes_from_previous_cal'] = response_codes
-                    df['failed_response_codes_from_previous_cal'] = df.failed_response_codes_from_previous_cal.apply(convert_str_to_sorted_set)
+                    df['failed_response_codes_from_previous_cal'] = df.failed_response_codes_from_previous_cal.apply(self.convert_str_to_sorted_set)
 
             except ValueError:
                 df["failed_response_codes_from_previous_cal"] = df['failed_response_code']
@@ -463,7 +393,6 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
         segment_num_group = [-1, 1, 2, 3, 4, 5, 6, 7, 8, 15, 20, 25, 30, 40, 50, 70, 100, 150]
         duration_group = [0, 3, 6, 9, 13, 17, 20, 25, 27, 33, 39, 43, 62, 70, 80, 88, 94, 100, 118, 125, 130, 146, 155, 176, 184, 200, 213, 230, 263, 300, 363, 368, 373,729, 733, 1000, 2000]
-        txn_hour_group = [0, 2, 6, 10, 14, 18, 22, 25]
         amount_group = [-1, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 170, 190, 210, 250, 300, 400, 500, 1000, 1500, 2000, 5000, 10000, 20000]
 
 
@@ -502,9 +431,16 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             except:
                 df['sub_age_group'] = None
 
+        if ("transaction_hour" in self.features_cat_and_encoded or "txn_hour_group" in self.features_cat_and_encoded) \
+                and "transaction_hour" not in df.columns:
+            try:
+                df['transaction_hour'] = df['txn_hour_min_segment'].apply(get_hour)
+            except:
+                df['transaction_hour'] = -1
+
         if "txn_hour_group" in self.features_cat_and_encoded and "txn_hour_group" not in df.columns:
             try:
-                df['txn_hour_group'] = pd.cut(df['transaction_hour'], txn_hour_group).astype(str).str.replace('.0', '', regex=False)
+                df['txn_hour_group'] = pd.cut(df['transaction_hour'], self.txn_hour_group).astype(str).str.replace('.0', '', regex=False)
             except:
                 df['txn_hour_group'] = None
 
@@ -704,11 +640,12 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         df_encoded_all[self.features_cat + self.features_grouped_encoded] = df_encoded_cat
 
         # Num processing
-        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names].astype(float)
+        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated].astype(float)
+        self.fillna_val = df[self.features_num + self.features_num_encoded + self.features_num_calculated ].astype(float).mean()
         df_num = df_num.fillna(self.fillna_val)
         # if not df_num.empty:
         #     df_num = self.scaler.transform(df_num.fillna(self.fillna_val))
-        df_encoded_all[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names] = df_num
+        df_encoded_all[self.features_num + self.features_num_encoded + self.features_num_calculated] = df_num
 
         return df_encoded_all
 
@@ -723,8 +660,9 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
     def fit(self, df, y=None, features_dict={}, **fit_params):
         """fit is called only when training, this should not be called when predicting"""
-        self.first_level_models = features_dict.get('first_level_models', {})
-        self.first_level_models_field_names = [f'predict_proba_{k}' for k in self.first_level_models.keys()]
+        self.generic_decline_codes = features_dict.get('generic_decline_codes', SortedSet([]))
+        # self.first_level_models = features_dict.get('first_level_models', {})
+        # self.first_level_models_field_names = [f'predict_proba_{k}' for k in self.first_level_models.keys()]
         df = self.handle_stack_models(df)
 
         self.features_num_encoded = features_dict[FEATURES_NUM_ENCODED_KEY]
@@ -751,6 +689,8 @@ class PreProcessing(BaseEstimator, TransformerMixin):
         self.features_grouped_encoded = ["-".join(feat_group) for feat_group in self.feat_grouped]
         self.additional_fields = features_dict[ADDITIONAL_FIELDS_KEY]
 
+        self.txn_hour_group = features_dict.get('txn_hour_group', self.default_txn_hour_group)
+
         df = self.handle_feat_float(df)
         df = self.handle_feat_encoded(df)
         df = self.handle_feat_num_encoded(df)
@@ -766,7 +706,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
 
         self.encode_feat_grouped(df)
         self.features_all = self.features_cat + self.features_grouped_encoded + self.features_num + self.features_num_encoded + \
-                            self.features_num_calculated + self.first_level_models_field_names
+                            self.features_num_calculated
 
         time_start = time.time()
         #         te = EnhancedTargetEncoder(cols=self.features_cat_and_encoded, handle_unknown='impute', min_samples_leaf=25, impute_missing=True)
@@ -784,7 +724,7 @@ class PreProcessing(BaseEstimator, TransformerMixin):
             print("# not using cat encoder")
 
         # Fit a scaler
-        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated + self.first_level_models_field_names].astype(float)
+        df_num = df[self.features_num + self.features_num_encoded + self.features_num_calculated].astype(float)
         self.fillna_val = df_num.mean()  # .median()
         # df_num = df_num.fillna(self.fillna_val)
         # if not df_num.empty:
@@ -807,6 +747,14 @@ class EnhancedPipeline(Pipeline):
             return last_step.fit_predict(Xt, y, **fit_params)
         else:
             return last_step.fit(Xt, y, **fit_params).predict(Xt)
+        
+    def predict_proba(self, X):
+        """Apply transforms, and predict_proba of the final estimator"""
+        Xt = X
+        for name, transform in self.steps[:-1]:
+            if transform is not None:
+                Xt = transform.transform(Xt)
+        return self.steps[-1][-1].predict_proba(Xt, thread_count=1)
 
 
 def make_pipeline(*steps, **kwargs):
