@@ -10,3 +10,4 @@ catboost==0.18.1
 boto3==1.13.22
 ipywidgets==7.5.0
 SortedSet==1.0
+matplotlib
