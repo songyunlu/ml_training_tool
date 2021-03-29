@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import joblib
 from importlib import import_module
 from os import path
 from pickle import HIGHEST_PROTOCOL
@@ -17,7 +18,6 @@ from cassandra.auth import PlainTextAuthProvider
 from cassandra.cluster import Cluster
 from sklearn import metrics
 from sklearn.dummy import DummyClassifier
-from sklearn.externals import joblib
 from sklearn.model_selection import GridSearchCV
 from sklearn.model_selection import train_test_split
 
